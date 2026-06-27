@@ -1,27 +1,61 @@
 package utils
 
 import (
+	"errors"
 	"strings"
 )
 
-func SplitHBaseRegionStr(data string) []string {
-	// Split the string just like: Namespace_n1_table_t1_region_r1_metric_m1
-	// return: [n1 t1 r1 m1]
+// SplitHBaseRegionStr splits a JMX key of the form
+//
+//	Namespace_n1_table_t1_region_r1_metric_m1
+//
+// into [namespace, table, region, metric] = [n1, t1, r1, m1].
+//
+// HBase region JMX keys are structured as
+// "Namespace_<ns>_table_<t>_region_<r>_metric_<m>"; the legacy separators
+// ("_region_", "_metric_") also match the metric/region segments, so we split
+// off the four tagged segments from left to right.
+func SplitHBaseRegionStr(data string) ([]string, error) {
+	const (
+		nsSep    = "Namespace_"
+		tableSep = "_table_"
+		regionSep = "_region_"
+		metricSep = "_metric_"
+	)
 
-	var res []string
-	flagList := []string{"Namespace_", "_table_", "_region_", "_metric_"}
-	temp1 := strings.SplitN(data, flagList[0], 2)
+	s, ok := cutPrefix(data, nsSep)
+	if !ok {
+		return nil, errors.New("missing Namespace_ prefix")
+	}
 
-	temp2 := strings.SplitN(temp1[1], flagList[1], 2)
-	res = append(res, temp2[0])
+	ns, s, ok := cutSegment(s, tableSep)
+	if !ok {
+		return nil, errors.New("missing _table_ separator")
+	}
+	table, s, ok := cutSegment(s, regionSep)
+	if !ok {
+		return nil, errors.New("missing _region_ separator")
+	}
+	region, metric, ok := cutSegment(s, metricSep)
+	if !ok {
+		return nil, errors.New("missing _metric_ separator")
+	}
 
-	temp3 := strings.SplitN(temp2[1], flagList[2], 2)
-	res = append(res, temp3[0])
+	return []string{ns, table, region, metric}, nil
+}
 
-	temp4 := strings.SplitN(temp3[1], flagList[3], 2)
-	res = append(res, temp4[0])
+// cutPrefix reports whether s starts with prefix and returns the remainder.
+func cutPrefix(s, prefix string) (string, bool) {
+	if !strings.HasPrefix(s, prefix) {
+		return s, false
+	}
+	return s[len(prefix):], true
+}
 
-	res = append(res, temp4[1])
-
-	return res
+// cutSegment splits s at the first occurrence of sep into (before, after).
+func cutSegment(s, sep string) (before, after string, ok bool) {
+	if i := strings.Index(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):], true
+	}
+	return s, "", false
 }

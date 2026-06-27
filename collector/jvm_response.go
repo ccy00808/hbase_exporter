@@ -1,6 +1,6 @@
 package collector
 
-type hbaseJvmResponse struct {
+type jvmResponse struct {
 	Host            string  `json:"tag.Hostname"`
 	Role            string  `json:"tag.ProcessName"`
 	SubName         string  `json:"name"`
