@@ -1,0 +1,84 @@
+version: 2
+
+project_name: hbase_exporter
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: hbase_exporter
+    main: .
+    binary: hbase_exporter
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/prometheus/common/version.Version={{.Version}}
+      - -X github.com/prometheus/common/version.Revision={{.Commit}}
+      - -X github.com/prometheus/common/version.Branch={{.Branch}}
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - darwin_amd64
+      - darwin_arm64
+      - windows_amd64
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+dockers:
+  - image_templates:
+      - "ghcr.io/daiwei233/hbase_exporter:{{ .Version }}-amd64"
+      - "ghcr.io/daiwei233/hbase_exporter:latest-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+  - image_templates:
+      - "ghcr.io/daiwei233/hbase_exporter:{{ .Version }}-arm64"
+      - "ghcr.io/daiwei233/hbase_exporter:latest-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+
+docker_manifests:
+  - name_template: "ghcr.io/daiwei233/hbase_exporter:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/daiwei233/hbase_exporter:{{ .Version }}-amd64"
+      - "ghcr.io/daiwei233/hbase_exporter:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/daiwei233/hbase_exporter:latest"
+    image_templates:
+      - "ghcr.io/daiwei233/hbase_exporter:latest-amd64"
+      - "ghcr.io/daiwei233/hbase_exporter:latest-arm64"
+
+release:
+  github:
+    owner: daiwei233
+    name: hbase_exporter

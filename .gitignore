@@ -1,0 +1,7 @@
+/hbase_exporter
+/hbase_exporter-*
+/dist/
+*.exe
+*.test
+*.out
+vendor/
