@@ -151,3 +151,19 @@ func (c *jmxCollector[T]) fetchAndDecode() (T, error) {
 func hostRoleLabels(host, role string) []string {
 	return []string{host, strings.ToLower(role)}
 }
+
+// compatibilityGauge builds a metric whose descriptor and labels follow the
+// JMX Prometheus Java agent configuration used by Gaia. The old exporter used
+// host/role labels, while the agent exposes a single instance label.
+func compatibilityGauge[T any](subsystem, name, help, instance string, value func(T) float64) metricDef[T] {
+	return metricDef[T]{
+		Type: prometheus.GaugeValue,
+		Desc: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, subsystem, name),
+			help,
+			[]string{"instance"}, nil,
+		),
+		Value:  value,
+		Labels: func(T) []string { return []string{instance} },
+	}
+}

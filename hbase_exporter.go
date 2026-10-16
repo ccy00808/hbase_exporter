@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -68,6 +69,9 @@ func main() {
 	hbaseIsMaster := kingpin.Flag("hbase.master",
 		"Scrape the HBase master (instead of a regionserver).").
 		Default("false").Envar("HBASE_IS_MASTER").Bool()
+	hbaseInstance := kingpin.Flag("hbase.instance",
+		"Compatibility instance label; defaults to the JMX host with port 7005 for HMaster or 7004 for RegionServer.").
+		Default("").Envar("HBASE_INSTANCE").String()
 	logLevel := kingpin.Flag("log.level",
 		"Sets the loglevel. Valid levels are debug, info, warn, error").
 		Default("info").Envar("LOG_LEVEL").String()
@@ -98,12 +102,15 @@ func main() {
 	prometheus.MustRegister(newBuildInfoCollector(name))
 
 	if *hbaseIsMaster {
+		instance := compatibilityInstance(*hbaseInstance, masterURL, true)
 		prometheus.MustRegister(collector.NewJvm(logger, masterURL))
-		prometheus.MustRegister(collector.NewMasterServer(logger, masterURL))
+		prometheus.MustRegister(collector.NewMasterServer(logger, masterURL, instance))
 	} else {
+		instance := compatibilityInstance(*hbaseInstance, regionserverURL, false)
 		prometheus.MustRegister(collector.NewJvm(logger, regionserverURL))
-		prometheus.MustRegister(collector.NewRsServer(logger, regionserverURL))
-		prometheus.MustRegister(collector.NewRsRegion(logger, regionserverURL))
+		prometheus.MustRegister(collector.NewRsServer(logger, regionserverURL, instance))
+		prometheus.MustRegister(collector.NewRsRegion(logger, regionserverURL, instance))
+		prometheus.MustRegister(collector.NewRsTable(logger, regionserverURL, instance))
 	}
 
 	level.Info(logger).Log("msg", "Build context", "build_context", version.BuildContext())
@@ -121,4 +128,15 @@ func main() {
 	})
 	level.Info(logger).Log("msg", "Listening on", "address", *listenAddress)
 	_ = http.ListenAndServe(*listenAddress, nil)
+}
+
+func compatibilityInstance(configured string, u *url.URL, isMaster bool) string {
+	if configured != "" {
+		return configured
+	}
+	port := "7004"
+	if isMaster {
+		port = "7005"
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }

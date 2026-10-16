@@ -36,3 +36,19 @@ func TestSplitHBaseRegionStr(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitHBaseTableStr(t *testing.T) {
+	got, err := SplitHBaseTableStr("Namespace_default_table_user_tag_metric_storeFileSize")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"default", "user_tag", "storeFileSize"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if _, err := SplitHBaseTableStr("Namespace_default_table_user_tag"); err == nil {
+		t.Fatal("expected malformed table key to fail")
+	}
+}

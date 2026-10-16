@@ -17,8 +17,8 @@ import (
 // off the four tagged segments from left to right.
 func SplitHBaseRegionStr(data string) ([]string, error) {
 	const (
-		nsSep    = "Namespace_"
-		tableSep = "_table_"
+		nsSep     = "Namespace_"
+		tableSep  = "_table_"
 		regionSep = "_region_"
 		metricSep = "_metric_"
 	)
@@ -42,6 +42,34 @@ func SplitHBaseRegionStr(data string) ([]string, error) {
 	}
 
 	return []string{ns, table, region, metric}, nil
+}
+
+// SplitHBaseTableStr splits a JMX key of the form
+//
+//	Namespace_<ns>_table_<table>_metric_<metric>
+//
+// into [namespace, table, metric]. Table and region values are exposed by
+// different RegionServer MBeans; callers should route region keys separately.
+func SplitHBaseTableStr(data string) ([]string, error) {
+	const (
+		nsSep     = "Namespace_"
+		tableSep  = "_table_"
+		metricSep = "_metric_"
+	)
+
+	s, ok := cutPrefix(data, nsSep)
+	if !ok {
+		return nil, errors.New("missing Namespace_ prefix")
+	}
+	ns, s, ok := cutSegment(s, tableSep)
+	if !ok {
+		return nil, errors.New("missing _table_ separator")
+	}
+	table, metric, ok := cutSegment(s, metricSep)
+	if !ok {
+		return nil, errors.New("missing _metric_ separator")
+	}
+	return []string{ns, table, metric}, nil
 }
 
 // cutPrefix reports whether s starts with prefix and returns the remainder.

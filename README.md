@@ -41,6 +41,7 @@ Below is the command line options summary:
 | hbase.master.uri       | HTTP jmx address of an HBase master node.             | http://localhost:60010/jmx |
 | hbase.regionserver.uri | HTTP jmx address of an HBase regionserver node.       | http://localhost:60030/jmx |
 | hbase.master           | Scrape the HBase master (instead of a regionserver).  | false                      |
+| hbase.instance         | `instance` label matching the Java agent.             | JMX host + `:7005`/`:7004` |
 | log.level              | Log level: debug, info, warn, error.                  | info                       |
 | log.format             | Log format: json, logfmt.                             | logfmt                     |
 | log.output             | Log output: stdout, stderr.                           | stdout                     |
@@ -54,7 +55,7 @@ All flags can also be set via environment variables (`WEB_LISTEN_ADDRESS`, `HBAS
 Start in master:
 
 ```
-./hbase_exporter --web.listen-address=":9003" --hbase.master.uri="http://localhost:60010/jmx" --hbase.master
+./hbase_exporter --web.listen-address=":9003" --hbase.master.uri="http://localhost:60010/jmx" --hbase.master --hbase.instance="10.38.82.195:7005"
 ```
 
 #### Regionserver
@@ -62,7 +63,7 @@ Start in master:
 Start in regionserver:
 
 ```
-./hbase_exporter --web.listen-address=":9003" --hbase.regionserver.uri="http://localhost:60030/jmx"
+./hbase_exporter --web.listen-address=":9003" --hbase.regionserver.uri="http://localhost:60030/jmx" --hbase.instance="10.38.82.195:7004"
 ```
 
 
@@ -95,20 +96,31 @@ Start in regionserver:
 
 
 
+#### JMX Java Agent compatibility
+
+The Server, Region and Table collectors use the same public metric names and
+labels as the HBase JMX Java agent configuration. Set `--hbase.instance` to
+the legacy Agent address (`<node-ip>:7005` for HMaster, `<node-ip>:7004` for
+RegionServer) when the default derived value is not appropriate.
+
+- Master Server: `hbase_master_server_*{instance}`
+- RegionServer Server: `hbase_regionserver_server_*{instance}`
+- RegionServer Regions: `hbase_regionserver_region_*{instance,namespace,table,regionid}`
+- RegionServer Tables: `hbase_regionserver_table_*{instance,namespace,table}`
+
 #### HMaster
 
 > HMaster server metrics, only for hmaster.
 >
 > From: http://localhost:60010/jmx?qry=Hadoop:service=HBase,name=Master,sub=Server
 >
-> Example: hbase_server_num_region_servers{host="localhost",role="master"}
+> Example: hbase_master_server_num_region_servers{instance="localhost:7005"}
 
 | Name                                 | Type  | Origin in jmx        |
 | ------------------------------------ | ----- | -------------------- |
-| hbase_server_num_region_servers      | gauge | numRegionServers     |
-| hbase_server_num_dead_region_servers | gauge | numDeadRegionServers |
-| hbase_server_is_active_master        | gauge | tag.isActiveMaster   |
-| hbase_server_average_load            | gauge | averageLoad          |
+| hbase_master_server_num_region_servers      | gauge | numRegionServers     |
+| hbase_master_server_num_dead_region_servers | gauge | numDeadRegionServers |
+| hbase_master_server_average_load            | gauge | averageLoad          |
 
 
 
@@ -118,31 +130,31 @@ Start in regionserver:
 >
 >From: http://localhost:60030/jmx?qry=Hadoop:service=HBase,name=RegionServer,sub=Server
 >
->Example: hbase_server_mem_store_size{host="localhost",role="regionserver"} 1
+>Example: hbase_regionserver_server_mem_store_size{instance="localhost:7004"} 1
 
 | Name                                 | Type  | Origin in jmx         |
 | ------------------------------------ | ----- | --------------------- |
-| hbase_server_mem_store_size          | gauge | memStoreSize          |
-| hbase_server_region_count            | gauge | regionCount           |
-| hbase_server_store_count             | gauge | storeCount            |
-| hbase_server_store_file_count        | gauge | storeFileCount        |
-| hbase_server_store_file_size         | gauge | storeFileSize         |
-| hbase_server_total_request_count     | gauge | totalRequestCount     |
-| hbase_server_read_request_count      | gauge | readRequestCount      |
-| hbase_server_write_request_count     | gauge | writeRequestCount     |
-| hbase_server_split_queue_length      | gauge | splitQueueLength      |
-| hbase_server_compaction_queue_length | gauge | compactionQueueLength |
-| hbase_server_flush_queue_length      | gauge | flushQueueLength      |
-| hbase_server_block_cache_count       | gauge | blockCacheCount       |
-| hbase_server_block_cache_size        | gauge | blockCacheSize        |
-| hbase_server_block_cache_hit_count   | gauge | blockCacheHitCount    |
-| hbase_server_block_cache_miss_count  | gauge | blockCacheMissCount   |
-| hbase_server_block_count_hit_percent | gauge | blockCountHitPercent  |
-| hbase_server_slow_append_count       | gauge | slowAppendCount       |
-| hbase_server_slow_delete_count       | gauge | slowDeleteCount       |
-| hbase_server_slow_get_count          | gauge | slowGetCount          |
-| hbase_server_slow_put_count          | gauge | slowPutCount          |
-| hbase_server_slow_increment_count    | gauge | slowIncrementCount    |
+| hbase_regionserver_server_mem_store_size          | gauge | memStoreSize          |
+| hbase_regionserver_server_region_count            | gauge | regionCount           |
+| hbase_regionserver_server_store_count             | gauge | storeCount            |
+| hbase_regionserver_server_store_file_count        | gauge | storeFileCount        |
+| hbase_regionserver_server_store_file_size         | gauge | storeFileSize         |
+| hbase_regionserver_server_total_request_count     | gauge | totalRequestCount     |
+| hbase_regionserver_server_read_request_count      | gauge | readRequestCount      |
+| hbase_regionserver_server_write_request_count     | gauge | writeRequestCount     |
+| hbase_regionserver_server_split_queue_length      | gauge | splitQueueLength      |
+| hbase_regionserver_server_compaction_queue_length | gauge | compactionQueueLength |
+| hbase_regionserver_server_flush_queue_length      | gauge | flushQueueLength      |
+| hbase_regionserver_server_block_cache_count       | gauge | blockCacheCount       |
+| hbase_regionserver_server_block_cache_size        | gauge | blockCacheSize        |
+| hbase_regionserver_server_block_cache_hit_count   | gauge | blockCacheHitCount    |
+| hbase_regionserver_server_block_cache_miss_count  | gauge | blockCacheMissCount   |
+| hbase_regionserver_server_block_cache_count_hit_percent | gauge | blockCacheCountHitPercent |
+| hbase_regionserver_server_slow_append_count       | gauge | slowAppendCount       |
+| hbase_regionserver_server_slow_delete_count       | gauge | slowDeleteCount       |
+| hbase_regionserver_server_slow_get_count          | gauge | slowGetCount          |
+| hbase_regionserver_server_slow_put_count          | gauge | slowPutCount          |
+| hbase_regionserver_server_slow_increment_count    | gauge | slowIncrementCount    |
 
 
 
@@ -150,18 +162,18 @@ Start in regionserver:
 >
 > From: http://localhost:60030/jmx?qry=Hadoop:service=HBase,name=RegionServer,sub=Regions
 >
-> Example:  hbase_region_store_count{host="localhost",hregion="4fcaf7b9d1fedc1b62c15cbb1c9a10dc",htable="t1",namespace="n1",role="regionserver"} 1
+> Example:  hbase_regionserver_region_store_count{instance="localhost:7004",namespace="n1",table="t1",regionid="4fcaf7b9d1fedc1b62c15cbb1c9a10dc"} 1
 
 | Name                                     | Type  | Origin in jmx             |
 | ---------------------------------------- | ----- | ------------------------- |
-| hbase_region_store_count                 | gauge | storeCount                |
-| hbase_region_store_file_count            | gauge | storeFileCount            |
-| hbase_region_mem_store_size              | gauge | memStoreSize              |
-| hbase_region_store_file_size             | gauge | storeFileSize             |
-| hbase_region_compactions_completed_count | gauge | compactionsCompletedCount |
-| hbase_region_compactions_failed_count    | gauge | compactionsFailedCount    |
-| hbase_region_read_request_count          | gauge | readRequestCount          |
-| hbase_region_write_request_count         | gauge | writeRequestCount         |
-| hbase_region_total_request_count         | gauge | totalRequestCount         |
-| hbase_region_num_files_compacted_count   | gauge | numFilesCompactedCount    |
-| hbase_region_num_bytes_compacted_count   | gauge | numBytesCompactedCount    |
+| hbase_regionserver_region_store_count                 | gauge | storeCount                |
+| hbase_regionserver_region_store_file_count            | gauge | storeFileCount            |
+| hbase_regionserver_region_mem_store_size              | gauge | memStoreSize              |
+| hbase_regionserver_region_store_file_size             | gauge | storeFileSize             |
+| hbase_regionserver_region_compactions_completed_count | gauge | compactionsCompletedCount |
+| hbase_regionserver_region_compactions_failed_count    | gauge | compactionsFailedCount    |
+| hbase_regionserver_region_read_request_count          | gauge | readRequestCount          |
+| hbase_regionserver_region_write_request_count         | gauge | writeRequestCount         |
+| hbase_regionserver_region_total_request_count         | gauge | totalRequestCount         |
+| hbase_regionserver_region_num_files_compacted_count   | gauge | numFilesCompactedCount    |
+| hbase_regionserver_region_num_bytes_compacted_count   | gauge | numBytesCompactedCount    |

@@ -2,40 +2,107 @@ package collector
 
 import (
 	"net/url"
+	"strings"
+	"sync"
 
 	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tidwall/gjson"
 )
 
-// RsServer is the Prometheus collector for the HBase RegionServer,sub=Server
-// bean. Only registered on regionserver-scraping instances.
+// RsServer exports the fixed RegionServer MBeans included in the JMX Prometheus
+// Java-agent configuration. Dynamic Tables and Regions MBeans remain separate
+// collectors because they add namespace/table/regionid labels.
 type RsServer struct {
-	*jmxCollector[rsServerResponse]
+	logger   log.Logger
+	url      *url.URL
+	instance string
+
+	up                              prometheus.Gauge
+	totalScrapes, jsonParseFailures prometheus.Counter
+
+	mu   sync.Mutex
+	jmxs []dynamicMetricPoint
 }
 
-func NewRsServer(logger log.Logger, u *url.URL) *RsServer {
-	labels := func(r rsServerResponse) []string { return hostRoleLabels(r.Host, r.Role) }
-	metrics := []metricDef[rsServerResponse]{
-		gauge(subsystemServer, "mem_store_size", "Sum of memstore sizes across all regions in bytes.", labels, func(r rsServerResponse) float64 { return float64(r.MemStoreSize) }),
-		gauge(subsystemServer, "region_count", "Number of regions served.", labels, func(r rsServerResponse) float64 { return float64(r.RegionCount) }),
-		gauge(subsystemServer, "store_count", "Number of stores.", labels, func(r rsServerResponse) float64 { return float64(r.StoreCount) }),
-		gauge(subsystemServer, "store_file_count", "Number of store files.", labels, func(r rsServerResponse) float64 { return float64(r.StoreFileCount) }),
-		gauge(subsystemServer, "store_file_size", "Aggregate size of store files in bytes.", labels, func(r rsServerResponse) float64 { return float64(r.StoreFileSize) }),
-		gauge(subsystemServer, "total_request_count", "Total number of requests.", labels, func(r rsServerResponse) float64 { return float64(r.TotalRequestCount) }),
-		gauge(subsystemServer, "read_request_count", "Number of read requests.", labels, func(r rsServerResponse) float64 { return float64(r.ReadRequestCount) }),
-		gauge(subsystemServer, "write_request_count", "Number of write requests.", labels, func(r rsServerResponse) float64 { return float64(r.WriteRequestCount) }),
-		gauge(subsystemServer, "split_queue_length", "Length of the split queue.", labels, func(r rsServerResponse) float64 { return float64(r.SplitQueueLength) }),
-		gauge(subsystemServer, "compaction_queue_length", "Length of the compaction queue.", labels, func(r rsServerResponse) float64 { return float64(r.CompactionQueueLength) }),
-		gauge(subsystemServer, "flush_queue_length", "Length of the flush queue.", labels, func(r rsServerResponse) float64 { return float64(r.FlushQueueLength) }),
-		gauge(subsystemServer, "block_cache_count", "Number of block cache entries.", labels, func(r rsServerResponse) float64 { return float64(r.BlockCacheCount) }),
-		gauge(subsystemServer, "block_cache_size", "Size of the block cache in bytes.", labels, func(r rsServerResponse) float64 { return float64(r.BlockCacheSize) }),
-		gauge(subsystemServer, "block_cache_hit_count", "Number of block cache hits.", labels, func(r rsServerResponse) float64 { return float64(r.BlockCacheHitCount) }),
-		gauge(subsystemServer, "block_cache_miss_count", "Number of block cache misses.", labels, func(r rsServerResponse) float64 { return float64(r.BlockCacheMissCount) }),
-		gauge(subsystemServer, "block_count_hit_percent", "Block cache hit ratio percentage.", labels, func(r rsServerResponse) float64 { return r.BlockCountHitPercent }),
-		gauge(subsystemServer, "slow_append_count", "Number of slow append operations.", labels, func(r rsServerResponse) float64 { return float64(r.SlowAppendCount) }),
-		gauge(subsystemServer, "slow_delete_count", "Number of slow delete operations.", labels, func(r rsServerResponse) float64 { return float64(r.SlowDeleteCount) }),
-		gauge(subsystemServer, "slow_get_count", "Number of slow get operations.", labels, func(r rsServerResponse) float64 { return float64(r.SlowGetCount) }),
-		gauge(subsystemServer, "slow_put_count", "Number of slow put operations.", labels, func(r rsServerResponse) float64 { return float64(r.SlowPutCount) }),
-		gauge(subsystemServer, "slow_increment_count", "Number of slow increment operations.", labels, func(r rsServerResponse) float64 { return float64(r.SlowIncrementCount) }),
+var regionServerMBeans = []string{
+	"IPC",
+	"Memory",
+	"Replication",
+	"Server",
+	"WAL",
+}
+
+func NewRsServer(logger log.Logger, u *url.URL, instance string) *RsServer {
+	return &RsServer{
+		logger:   logger,
+		url:      u,
+		instance: instance,
+		up: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "hbase_regionserver_up",
+			Help: "Whether every configured HBase RegionServer JMX MBean was scraped successfully.",
+		}),
+		totalScrapes: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "hbase_regionserver_total_scrapes",
+			Help: "Total HBase RegionServer scrape attempts.",
+		}),
+		jsonParseFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "hbase_regionserver_json_parse_failures",
+			Help: "Number of errors while parsing HBase RegionServer JMX JSON.",
+		}),
+		jmxs: make([]dynamicMetricPoint, 0, 800),
 	}
-	return &RsServer{newJmxCollector(logger, u, subsystemServer, "Hadoop:service=HBase,name=RegionServer,sub=Server", metrics)}
+}
+
+// RegionServer fixed MBeans vary slightly by HBase release. An unchecked
+// collector keeps the compatible numeric fields available without embedding a
+// per-version response struct.
+func (r *RsServer) Describe(ch chan<- *prometheus.Desc) {}
+
+func (r *RsServer) Collect(ch chan<- prometheus.Metric) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.totalScrapes.Inc()
+	defer func() {
+		ch <- r.up
+		ch <- r.totalScrapes
+		ch <- r.jsonParseFailures
+	}()
+
+	if err := r.fetch(); err != nil {
+		r.up.Set(0)
+		_ = level.Warn(r.logger).Log("msg", "failed to fetch HBase RegionServer JMX", "err", err)
+		return
+	}
+	r.up.Set(1)
+	for _, point := range r.jmxs {
+		ch <- prometheus.MustNewConstMetric(point.desc, prometheus.UntypedValue, point.value, point.labels...)
+	}
+}
+
+func (r *RsServer) fetch() error {
+	r.jmxs = r.jmxs[:0]
+	for _, sub := range regionServerMBeans {
+		bean, err := fetchJMXBean(r.url, "Hadoop:service=HBase,name=RegionServer,sub="+sub)
+		if err != nil {
+			return err
+		}
+		for key, value := range bean {
+			if value.Type != gjson.Number || strings.Contains(key, ":") {
+				continue
+			}
+			r.jmxs = append(r.jmxs, dynamicMetricPoint{
+				desc: prometheus.NewDesc(
+					prometheus.BuildFQName(namespace, "regionserver_"+jmxFieldName(sub), jmxFieldName(key)),
+					"HBase RegionServer "+sub+" JMX metric "+key+".",
+					[]string{"instance"}, nil,
+				),
+				value:  value.Float(),
+				labels: []string{r.instance},
+			})
+		}
+	}
+	return nil
 }
