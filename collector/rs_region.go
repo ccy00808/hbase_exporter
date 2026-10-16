@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,6 +37,11 @@ type dynamicMetricPoint struct {
 	value  float64
 	labels []string
 }
+
+// errNoJMXBeans indicates a successful JMX HTTP response whose queried MBean
+// is not present on this daemon. Standby HMasters legitimately omit some
+// active-only MBeans such as AssignmentManager.
+var errNoJMXBeans = errors.New("no JMX beans in response")
 
 func NewRsRegion(logger log.Logger, u *url.URL, instance string) *RsRegion {
 	return &RsRegion{
@@ -131,7 +137,7 @@ func fetchJMXBean(base *url.URL, bean string) (map[string]gjson.Result, error) {
 	}
 	beans := gjson.GetBytes(body, "beans").Array()
 	if len(beans) == 0 {
-		return nil, fmt.Errorf("no beans in JMX response from %s", u.String())
+		return nil, fmt.Errorf("%w from %s", errNoJMXBeans, u.String())
 	}
 	return beans[0].Map(), nil
 }

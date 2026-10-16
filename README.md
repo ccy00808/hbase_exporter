@@ -108,6 +108,29 @@ RegionServer) when the default derived value is not appropriate.
 - RegionServer Regions: `hbase_regionserver_region_*{instance,namespace,table,regionid}`
 - RegionServer Tables: `hbase_regionserver_table_*{instance,namespace,table}`
 
+#### Blackbox-style proxy mode
+
+Use `--probe.enabled` to run one exporter as a proxy for multiple HBase
+nodes. Each `/metrics` request scrapes exactly one target; metrics from separate
+targets are never aggregated in one response.
+
+```bash
+./hbase_exporter --web.listen-address=":9102" --probe.enabled
+```
+
+The `target` parameter accepts `ip:port` or a full HTTP(S) JMX URL. The
+standard HBase ports infer the role automatically (`16010` for HMaster and
+`16030` for RegionServer); pass `role` explicitly for other ports.
+
+```text
+/metrics?target=172.28.24.101:16010&role=master
+/metrics?target=172.28.24.104:16030&role=regionserver
+/metrics?target=172.28.24.104:16030&role=regionserver&instance=172.28.24.104:7004
+```
+
+`instance` is optional. When omitted, the exporter derives `<host>:7005` for
+HMaster and `<host>:7004` for RegionServer to match the Java agent labels.
+
 #### HMaster
 
 > HMaster server metrics, only for hmaster.

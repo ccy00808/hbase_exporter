@@ -1,12 +1,42 @@
 package collector
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+func TestMasterServerSkipsMissingOptionalMBean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("qry"), "AssignmentManager") {
+			_, _ = w.Write([]byte(`{"beans":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"beans":[{"averageLoad":3.5}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewMasterServer(log.NewNopLogger(), u, "10.38.82.195:7005")
+	expected := `
+# HELP hbase_master_server_average_load HBase Master Server JMX metric averageLoad.
+# TYPE hbase_master_server_average_load untyped
+hbase_master_server_average_load{instance="10.38.82.195:7005"} 3.5
+`
+	if err := testutil.CollectAndCompare(c, strings.NewReader(expected), "hbase_master_server_average_load"); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.ToFloat64(c.up); got != 1 {
+		t.Fatalf("hbase_master_up = %v, want 1", got)
+	}
+}
 
 func TestMasterServerUsesAgentNameAndInstanceLabel(t *testing.T) {
 	payload := `{"beans":[{

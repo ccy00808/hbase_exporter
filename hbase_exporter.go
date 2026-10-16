@@ -72,6 +72,9 @@ func main() {
 	hbaseInstance := kingpin.Flag("hbase.instance",
 		"Compatibility instance label; defaults to the JMX host with port 7005 for HMaster or 7004 for RegionServer.").
 		Default("").Envar("HBASE_INSTANCE").String()
+	probeEnabled := kingpin.Flag("probe.enabled",
+		"Enable the Blackbox-style /metrics endpoint for scraping a target supplied per request.").
+		Default("false").Envar("PROBE_ENABLED").Bool()
 	logLevel := kingpin.Flag("log.level",
 		"Sets the loglevel. Valid levels are debug, info, warn, error").
 		Default("info").Envar("LOG_LEVEL").String()
@@ -101,33 +104,66 @@ func main() {
 
 	prometheus.MustRegister(newBuildInfoCollector(name))
 
-	if *hbaseIsMaster {
-		instance := compatibilityInstance(*hbaseInstance, masterURL, true)
-		prometheus.MustRegister(collector.NewJvm(logger, masterURL))
-		prometheus.MustRegister(collector.NewMasterServer(logger, masterURL, instance))
-	} else {
-		instance := compatibilityInstance(*hbaseInstance, regionserverURL, false)
-		prometheus.MustRegister(collector.NewJvm(logger, regionserverURL))
-		prometheus.MustRegister(collector.NewRsServer(logger, regionserverURL, instance))
-		prometheus.MustRegister(collector.NewRsRegion(logger, regionserverURL, instance))
-		prometheus.MustRegister(collector.NewRsTable(logger, regionserverURL, instance))
+	if !*probeEnabled {
+		targetURL := regionserverURL
+		isMaster := *hbaseIsMaster
+		if isMaster {
+			targetURL = masterURL
+		}
+		instance := compatibilityInstance(*hbaseInstance, targetURL, isMaster)
+		if err := registerTargetCollectors(prometheus.DefaultRegisterer, logger, targetURL, isMaster, instance); err != nil {
+			_ = level.Error(logger).Log("msg", "failed to register HBase collectors", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	level.Info(logger).Log("msg", "Build context", "build_context", version.BuildContext())
 	level.Info(logger).Log("msg", "Starting hbase_exporter", "version", version.Info())
 
-	http.Handle(*metricsPath, promhttp.Handler())
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`<html>
-			<head><title>HBase Exporter</title></head>
-			<body>
-			<h1>HBase Exporter</h1>
-			<p><a href='` + *metricsPath + `'>Metrics</a></p>
-			</body>
-			</html>`))
-	})
+	handler := newHTTPHandler(*metricsPath, *probeEnabled, logger)
 	level.Info(logger).Log("msg", "Listening on", "address", *listenAddress)
-	_ = http.ListenAndServe(*listenAddress, nil)
+	_ = http.ListenAndServe(*listenAddress, handler)
+}
+
+func registerTargetCollectors(registerer prometheus.Registerer, logger log.Logger, targetURL *url.URL, isMaster bool, instance string) error {
+	collectors := []prometheus.Collector{collector.NewJvm(logger, targetURL)}
+	if isMaster {
+		collectors = append(collectors, collector.NewMasterServer(logger, targetURL, instance))
+	} else {
+		collectors = append(collectors,
+			collector.NewRsServer(logger, targetURL, instance),
+			collector.NewRsRegion(logger, targetURL, instance),
+			collector.NewRsTable(logger, targetURL, instance),
+		)
+	}
+	for _, c := range collectors {
+		if err := registerer.Register(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newHTTPHandler(metricsPath string, probeEnabled bool, logger log.Logger) http.Handler {
+	mux := http.NewServeMux()
+	if probeEnabled {
+		mux.Handle(metricsPath, newProbeHandler(logger))
+	} else {
+		mux.Handle(metricsPath, promhttp.Handler())
+	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		body := `<html><head><title>HBase Exporter</title></head><body><h1>HBase Exporter</h1><p><a href='` + metricsPath + `'>Metrics</a></p>`
+		if probeEnabled {
+			body += `<p>Metrics: <code>` + metricsPath + `?target=&lt;ip:port&gt;&amp;role=master|regionserver</code></p>`
+		}
+		body += `</body></html>`
+		_, _ = w.Write([]byte(body))
+	})
+	return mux
 }
 
 func compatibilityInstance(configured string, u *url.URL, isMaster bool) string {

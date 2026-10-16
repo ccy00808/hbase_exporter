@@ -1,6 +1,8 @@
 package collector
 
 import (
+	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -54,7 +56,7 @@ func NewMasterServer(logger log.Logger, u *url.URL, instance string) *MasterServ
 		instance: instance,
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "hbase_master_up",
-			Help: "Whether every configured HBase Master JMX MBean was scraped successfully.",
+			Help: "Whether at least one available HBase Master JMX MBean was scraped successfully.",
 		}),
 		totalScrapes: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "hbase_master_total_scrapes",
@@ -97,11 +99,17 @@ func (m *MasterServer) Collect(ch chan<- prometheus.Metric) {
 
 func (m *MasterServer) fetch() error {
 	m.jmxs = m.jmxs[:0]
+	scrapedBeans := 0
 	for _, mbean := range masterMBeans {
 		bean, err := fetchJMXBean(m.url, "Hadoop:service=HBase,name=Master,sub="+mbean.jmxSub)
 		if err != nil {
+			if errors.Is(err, errNoJMXBeans) {
+				_ = level.Debug(m.logger).Log("msg", "master JMX MBean is unavailable on this node", "mbean", mbean.jmxSub)
+				continue
+			}
 			return err
 		}
+		scrapedBeans++
 		for key, value := range bean {
 			if !masterNumericAttribute(key, value) {
 				continue
@@ -116,6 +124,9 @@ func (m *MasterServer) fetch() error {
 				labels: []string{m.instance},
 			})
 		}
+	}
+	if scrapedBeans == 0 {
+		return fmt.Errorf("no configured HBase Master JMX MBeans are available")
 	}
 	return nil
 }
