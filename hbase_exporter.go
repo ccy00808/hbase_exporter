@@ -134,6 +134,7 @@ func registerTargetCollectors(registerer prometheus.Registerer, logger log.Logge
 			collector.NewRsServer(logger, targetURL, instance),
 			collector.NewRsRegion(logger, targetURL, instance),
 			collector.NewRsTable(logger, targetURL, instance),
+			collector.NewRsTableLatencies(logger, targetURL, instance),
 		)
 	}
 	for _, c := range collectors {
